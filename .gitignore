@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+data/style_guide.json
+data/content_plan.json
+data/archive/
