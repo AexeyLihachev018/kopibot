@@ -131,13 +131,13 @@ class Orchestrator:
         style_guide = await self.style_analyst.analyze(texts[:50])  # limit to 50 posts
         save_style_guide(style_guide)
         return (
-            f"Архив обработан: {len(texts)} постов проанализировано.\n\n"
-            f"Стилевой профиль сохранён:\n"
-            f"• Тон: {style_guide.get('tone', '—')}\n"
-            f"• Ритм: {style_guide.get('sentence_rhythm', '—')}\n"
-            f"• Средняя длина поста: {style_guide.get('avg_post_length', '—')} симв.\n"
-            f"• Эмодзи: {style_guide.get('emoji_usage', '—')}\n\n"
-            f"Теперь буду писать в твоём стиле."
+            f"✅ Архив обработан: {len(texts)} постов проанализировано.\n\n"
+            f"*Стилевой профиль сохранён:*\n"
+            f"🎭 Тон: {style_guide.get('tone', '—')}\n"
+            f"🎵 Ритм: {style_guide.get('sentence_rhythm', '—')}\n"
+            f"📏 Средняя длина поста: {style_guide.get('avg_post_length', '—')} симв.\n"
+            f"😊 Эмодзи: {style_guide.get('emoji_usage', '—')}\n\n"
+            f"✍️ Теперь буду писать в твоём стиле."
         )
 
     async def _generate_flow(self, topic: str, style_guide: dict) -> str:

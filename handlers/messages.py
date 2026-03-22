@@ -104,10 +104,10 @@ async def btn_my_style(message: Message, state: FSMContext):
         emoji_use = sg.get("emoji_usage", "—")
         await message.answer(
             "*Стилевой профиль загружен* ✅\n\n"
-            f"• Тон: {tone}\n"
-            f"• Ритм предложений: {rhythm}\n"
-            f"• Эмодзи: {emoji_use}\n\n"
-            "Чтобы обновить — прикрепи новый файл архива (.md или .json).\n\n"
+            f"🎭 Тон: {tone}\n"
+            f"🎵 Ритм предложений: {rhythm}\n"
+            f"😊 Эмодзи в постах: {emoji_use}\n\n"
+            "📎 Чтобы обновить — прикрепи новый файл архива (.md или .json).\n\n"
             "_Как выгрузить архив: Telegram Desktop → канал → три точки → Экспорт истории чата → только текст, формат JSON_",
             parse_mode="Markdown",
         )
