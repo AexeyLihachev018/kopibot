@@ -62,6 +62,7 @@ async def handle_post_topic(message: Message, state: FSMContext):
 
 @router.message(F.text == "📋 Контент-план")
 async def btn_content_plan(message: Message, state: FSMContext):
+    await state.clear()
     plan = load_plan()
     if plan:
         msg = await message.answer("Загружаю контент-план...")
@@ -94,7 +95,8 @@ async def handle_plan_params(message: Message, state: FSMContext):
 
 
 @router.message(F.text == "🎨 Мой стиль")
-async def btn_my_style(message: Message):
+async def btn_my_style(message: Message, state: FSMContext):
+    await state.clear()
     sg = load_style_guide()
     if sg:
         tone = sg.get("tone", "—")
@@ -120,7 +122,8 @@ async def btn_my_style(message: Message):
 
 
 @router.message(F.text == "⚙️ Настройки")
-async def btn_settings(message: Message):
+async def btn_settings(message: Message, state: FSMContext):
+    await state.clear()
     sg = load_style_guide()
     plan = load_plan()
     style_status = "✅ Загружен" if sg else "❌ Не загружен"
