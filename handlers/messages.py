@@ -86,9 +86,28 @@ async def btn_content_plan(message: Message, state: FSMContext):
 async def handle_plan_params(message: Message, state: FSMContext):
     await state.clear()
     params = message.text
-    msg = await message.answer(f"Создаю контент-план... ⏳", parse_mode="Markdown")
+    msg = await message.answer("Создаю контент-план... ⏳")
     try:
-        result = await orc.handle_message(f"создай контент-план: {params}")
+        import re as _re
+        from tools.plan_store import save_plan
+        # Extract period from "тема, период" format
+        period_match = _re.search(r'(\d+\s*(?:день|дня|дней|неделя|недели|недель|неделю|месяц|месяца|месяцев))', params, _re.IGNORECASE)
+        if period_match:
+            period = period_match.group(1)
+            topic = params[:period_match.start()].strip(" ,")
+        elif "неделя" in params.lower() or "недел" in params.lower():
+            period = "1 неделя"
+            topic = params
+        elif "месяц" in params.lower():
+            period = "месяц"
+            topic = params.replace("месяц", "").strip(" ,")
+        else:
+            period = "месяц"
+            topic = params
+        style_guide = load_style_guide()
+        plan = await orc.planner.create_plan(period, topic=topic, style_guide=style_guide)
+        save_plan(plan)
+        result = await orc.planner.format_plan_message(plan)
         await msg.edit_text(result, parse_mode="Markdown")
     except Exception as e:
         await msg.edit_text(f"Ошибка: {e}")
