@@ -1,5 +1,17 @@
 import json
 from agents.dispatcher import Dispatcher
+
+
+def _extract_result(edited: str) -> str:
+    """Extract РЕЗУЛЬТАТ section from editor output."""
+    if "РЕЗУЛЬТАТ:" in edited:
+        parts = edited.split("РЕЗУЛЬТАТ:")
+        if len(parts) > 1:
+            result_part = parts[1]
+            if "ПРАВКИ:" in result_part:
+                result_part = result_part.split("ПРАВКИ:")[0]
+            return result_part.strip()
+    return ""
 from agents.style_analyst import StyleAnalyst
 from agents.researcher import Researcher
 from agents.generator import Generator
@@ -140,8 +152,27 @@ class Orchestrator:
             f"✍️ Теперь буду писать в твоём стиле."
         )
 
+    async def _generate_post_only(self, topic: str, style_guide: dict) -> str:
+        """Research -> Generate -> Critique flow. Returns clean post text only."""
+        brief = await self.researcher.research(topic, style_guide=style_guide)
+        post = await self.generator.generate(
+            topic, brief=brief, style_guide=style_guide
+        )
+        critique = await self.critic.critique(post, style_guide)
+
+        if critique["decision"] == "rewrite":
+            post = await self.generator.generate(
+                topic, brief=brief, style_guide=style_guide
+            )
+        elif critique["decision"] == "revise" and critique.get("edit_commands"):
+            for cmd in critique["edit_commands"][:2]:
+                edited = await self.editor.edit(post, cmd, style_guide)
+                post = _extract_result(edited) or post
+
+        return post
+
     async def _generate_flow(self, topic: str, style_guide: dict) -> str:
-        """Research -> Generate -> Critique flow."""
+        """Research -> Generate -> Critique flow. Returns post + critic score."""
         brief = await self.researcher.research(topic, style_guide=style_guide)
         post = await self.generator.generate(
             topic, brief=brief, style_guide=style_guide
@@ -156,17 +187,7 @@ class Orchestrator:
         elif critique["decision"] == "revise" and critique.get("edit_commands"):
             for cmd in critique["edit_commands"][:2]:
                 edited = await self.editor.edit(post, cmd, style_guide)
-                # Extract just the РЕЗУЛЬТАТ section if present
-                if "РЕЗУЛЬТАТ:" in edited:
-                    parts = edited.split("РЕЗУЛЬТАТ:")
-                    if len(parts) > 1:
-                        result_part = parts[1]
-                        # Strip the ПРАВКИ section if present
-                        if "ПРАВКИ:" in result_part:
-                            result_part = result_part.split("ПРАВКИ:")[0]
-                        post = result_part.strip()
-                else:
-                    post = edited
+                post = _extract_result(edited) or post
 
         score = critique.get("score", "—")
         return f"{post}\n\n— — —\n_Оценка Критика: {score}/10_"

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -5,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from orchestrator import Orchestrator
 from tools.style_store import load_style_guide
 from tools.plan_store import load_plan
+from tools.post_cache import save_post
 from config import STYLE_GUIDE_PATH, CONTENT_PLAN_PATH
 
 router = Router()
@@ -34,6 +36,22 @@ SETTINGS_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="ℹ️ О боте", callback_data="settings_about")],
 ])
 
+POST_ACTIONS_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(text="✂️ Короче", callback_data="post_short"),
+        InlineKeyboardButton(text="📝 Длиннее", callback_data="post_long"),
+        InlineKeyboardButton(text="😊 Человечнее", callback_data="post_human"),
+    ],
+    [
+        InlineKeyboardButton(text="⚡ Хлестче", callback_data="post_punch"),
+        InlineKeyboardButton(text="✅ Грамматика", callback_data="post_grammar"),
+        InlineKeyboardButton(text="🔄 Переписать", callback_data="post_regen"),
+    ],
+    [
+        InlineKeyboardButton(text="👍 Готово", callback_data="post_done"),
+    ],
+])
+
 
 @router.message(F.text == "✍️ Написать пост")
 async def btn_write_post(message: Message, state: FSMContext):
@@ -51,11 +69,18 @@ async def btn_write_post(message: Message, state: FSMContext):
 async def handle_post_topic(message: Message, state: FSMContext):
     await state.clear()
     topic = message.text
-    msg = await message.answer(f"Пишу пост на тему «{topic}»... ✍️\n\n_Это займёт 15-30 секунд_", parse_mode="Markdown")
+    msg = await message.answer(
+        f"Пишу пост на тему «{topic}»... ✍️\n\n_Это займёт 15-30 секунд_",
+        parse_mode="Markdown",
+    )
     try:
         style_guide = load_style_guide()
-        result = await orc._generate_flow(topic, style_guide)
-        await msg.edit_text(result, parse_mode="Markdown")
+        post_text = await orc._generate_post_only(topic, style_guide)
+        # Save to cache for edit buttons
+        save_post(message.from_user.id, post_text, topic)
+        # Delete "writing..." message and send clean post
+        await msg.delete()
+        await message.answer(post_text, reply_markup=POST_ACTIONS_KEYBOARD)
     except Exception as e:
         await msg.edit_text(f"Ошибка при генерации: {e}")
 
@@ -90,12 +115,14 @@ async def handle_plan_params(message: Message, state: FSMContext):
     try:
         import re as _re
         from tools.plan_store import save_plan
-        # Extract period from "тема, период" format
-        period_match = _re.search(r'(\d+\s*(?:день|дня|дней|неделя|недели|недель|неделю|месяц|месяца|месяцев))', params, _re.IGNORECASE)
+        period_match = _re.search(
+            r'(\d+\s*(?:день|дня|дней|неделя|недели|недель|неделю|месяц|месяца|месяцев))',
+            params, _re.IGNORECASE
+        )
         if period_match:
             period = period_match.group(1)
             topic = params[:period_match.start()].strip(" ,")
-        elif "неделя" in params.lower() or "недел" in params.lower():
+        elif "недел" in params.lower():
             period = "1 неделя"
             topic = params
         elif "месяц" in params.lower():
@@ -168,6 +195,10 @@ async def btn_help(message: Message, state: FSMContext):
         "✍️ *Написать пост* — нажми кнопку, напиши тему — готово\n"
         "📋 *Контент-план* — покажу план или создам новый\n"
         "🎨 *Мой стиль* — прикрепи файл архива (.md или .json)\n\n"
+        "*Под каждым постом кнопки:*\n"
+        "✂️ Короче · 📝 Длиннее · 😊 Человечнее\n"
+        "⚡ Хлестче · ✅ Грамматика · 🔄 Переписать\n"
+        "👍 Готово — убирает кнопки\n\n"
         "*Текстовые команды:*\n"
         "• _короче [текст]_ — сократить\n"
         "• _живее [текст]_ — сделать живее\n"
