@@ -15,6 +15,6 @@ class BaseAgent:
         response = await self.client.chat.completions.create(
             model=model,
             messages=messages,
-            max_tokens=4096,
+            max_tokens=2000,
         )
         return response.choices[0].message.content.strip()
