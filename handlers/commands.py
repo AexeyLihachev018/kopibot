@@ -1,12 +1,13 @@
+from __future__ import annotations
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.fsm.context import FSMContext
 from orchestrator import Orchestrator
 
 router = Router()
 orc = Orchestrator()
 
-# Главная клавиатура с кнопками
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✍️ Написать пост"), KeyboardButton(text="📋 Контент-план")],
@@ -32,24 +33,44 @@ async def cmd_start(message: Message):
     )
 
 
-@router.message(Command("помощь", "help"))
-async def cmd_help(message: Message):
-    await message.answer(
-        "*Что я умею:*\n\n"
-        "✍️ *Написать пост* — укажи тему, напишу в твоём стиле\n"
-        "📋 *Контент-план* — создам или покажу план постов\n"
-        "🎨 *Мой стиль* — загрузи архив канала (.md или .json)\n"
-        "✂️ Редактура — вставь текст и скажи: *короче / живее / хлестче*\n"
-        "⭐ Оценка — *оцени: [текст]* — критика по шкале 1-10\n\n"
-        "*Команды:*\n"
-        "/план — текущий контент-план\n"
-        "/следующий — следующий пост по плану\n"
-        "/стиль — стилевой профиль\n"
-        "/start — главное меню",
-        parse_mode="Markdown",
-        reply_markup=MAIN_KEYBOARD,
-    )
+# ─── Menu button commands (дублируют кнопки клавиатуры) ──────────────────────
 
+@router.message(Command("napisat"))
+async def cmd_napisat(message: Message, state: FSMContext):
+    """Написать пост — через меню бота."""
+    from handlers.messages import btn_write_post
+    await btn_write_post(message, state)
+
+
+@router.message(Command("plan"))
+async def cmd_plan_menu(message: Message, state: FSMContext):
+    """Контент-план — через меню бота."""
+    from handlers.messages import btn_content_plan
+    await btn_content_plan(message, state)
+
+
+@router.message(Command("style"))
+async def cmd_style_menu(message: Message, state: FSMContext):
+    """Мой стиль — через меню бота."""
+    from handlers.messages import btn_my_style
+    await btn_my_style(message, state)
+
+
+@router.message(Command("settings"))
+async def cmd_settings_menu(message: Message, state: FSMContext):
+    """Настройки — через меню бота."""
+    from handlers.messages import btn_settings
+    await btn_settings(message, state)
+
+
+@router.message(Command("help", "помощь"))
+async def cmd_help(message: Message, state: FSMContext):
+    """Помощь — через меню бота."""
+    from handlers.messages import btn_help
+    await btn_help(message, state)
+
+
+# ─── Прочие команды ───────────────────────────────────────────────────────────
 
 @router.message(Command("план"))
 async def cmd_plan(message: Message):
