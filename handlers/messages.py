@@ -85,17 +85,53 @@ async def handle_post_topic(message: Message, state: FSMContext):
         await msg.edit_text(f"Ошибка при генерации: {e}")
 
 
+RUBRIC_EMOJI = {
+    "личная": "👤",
+    "экспертная": "🧠",
+    "продуктовая": "🔧",
+    "продающая": "💰",
+}
+
+PLAN_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="📋 Весь план", callback_data="plan_show_all")],
+    [InlineKeyboardButton(text="✅ Отметить готово", callback_data="plan_mark_done")],
+])
+
+
 @router.message(F.text == "📋 Контент-план")
 async def btn_content_plan(message: Message, state: FSMContext):
     await state.clear()
     plan = load_plan()
     if plan:
-        msg = await message.answer("Загружаю контент-план...")
-        try:
-            result = await orc.handle_message("покажи план")
-            await msg.edit_text(result, parse_mode="Markdown")
-        except Exception as e:
-            await msg.edit_text(f"Ошибка: {e}")
+        # Show 3 nearest not-done posts
+        upcoming = [p for p in plan if p.get("status") != "done"][:3]
+        if not upcoming:
+            await message.answer(
+                "🎉 Все посты по плану выполнены!\n\n"
+                "Создай новый план — напиши тему и период:\n"
+                "_«личный бренд, 2 недели»_",
+                parse_mode="Markdown",
+            )
+            return
+
+        lines = ["*Ближайшие посты:*\n"]
+        for item in upcoming:
+            rubric = item.get("rubric", "")
+            emoji = RUBRIC_EMOJI.get(rubric, "📝")
+            date = item.get("date", "")
+            topic = item.get("topic", "")
+            fmt = item.get("format", "")
+            lines.append(f"{emoji} *{date}*\n_{topic}_\nФормат: {fmt}\n")
+
+        total = len(plan)
+        done = sum(1 for p in plan if p.get("status") == "done")
+        lines.append(f"📊 Прогресс: {done}/{total} постов готово")
+
+        await message.answer(
+            "\n".join(lines),
+            parse_mode="Markdown",
+            reply_markup=PLAN_KEYBOARD,
+        )
     else:
         await state.set_state(BotStates.waiting_for_plan_params)
         await message.answer(

@@ -107,6 +107,39 @@ async def cb_post_done(callback: CallbackQuery):
     clear_post(callback.from_user.id)
 
 
+# ─── Plan buttons ─────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == "plan_show_all")
+async def cb_plan_show_all(callback: CallbackQuery):
+    plan = load_plan()
+    if not plan:
+        await callback.answer("План пуст", show_alert=True)
+        return
+    await callback.answer()
+    RUBRIC_EMOJI = {"личная": "👤", "экспертная": "🧠", "продуктовая": "🔧", "продающая": "💰"}
+    lines = ["*Полный контент-план:*\n"]
+    for item in plan:
+        status = "✅" if item.get("status") == "done" else "⬜"
+        emoji = RUBRIC_EMOJI.get(item.get("rubric", ""), "📝")
+        lines.append(f"{status} {emoji} `{item['id']}` {item['date']} — {item['topic']}")
+    await callback.message.answer("\n".join(lines), parse_mode="Markdown")
+
+
+@router.callback_query(lambda c: c.data == "plan_mark_done")
+async def cb_plan_mark_done(callback: CallbackQuery):
+    plan = load_plan()
+    upcoming = [p for p in plan if p.get("status") != "done"]
+    if not upcoming:
+        await callback.answer("Все посты уже выполнены!", show_alert=True)
+        return
+    first = upcoming[0]
+    from tools.plan_store import mark_done, save_plan
+    updated = mark_done(plan, first["id"])
+    save_plan(updated)
+    await callback.answer(f"✅ Пост #{first['id']} отмечен как готовый", show_alert=True)
+    await callback.message.delete()
+
+
 # ─── Settings buttons ─────────────────────────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == "settings_status")
