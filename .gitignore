@@ -6,3 +6,5 @@ __pycache__/
 data/style_guide.json
 data/content_plan.json
 data/archive/
+bot.pid
+bot.log

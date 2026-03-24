@@ -39,35 +39,50 @@ async def cmd_start(message: Message):
 async def cmd_napisat(message: Message, state: FSMContext):
     """Написать пост — через меню бота."""
     from handlers.messages import btn_write_post
-    await btn_write_post(message, state)
+    try:
+        await btn_write_post(message, state)
+    except Exception as e:
+        await message.answer(f"Ошибка при запуске: {e}")
 
 
 @router.message(Command("plan"))
 async def cmd_plan_menu(message: Message, state: FSMContext):
     """Контент-план — через меню бота."""
     from handlers.messages import btn_content_plan
-    await btn_content_plan(message, state)
+    try:
+        await btn_content_plan(message, state)
+    except Exception as e:
+        await message.answer(f"Ошибка при запуске: {e}")
 
 
 @router.message(Command("style"))
 async def cmd_style_menu(message: Message, state: FSMContext):
     """Мой стиль — через меню бота."""
     from handlers.messages import btn_my_style
-    await btn_my_style(message, state)
+    try:
+        await btn_my_style(message, state)
+    except Exception as e:
+        await message.answer(f"Ошибка при запуске: {e}")
 
 
 @router.message(Command("settings"))
 async def cmd_settings_menu(message: Message, state: FSMContext):
     """Настройки — через меню бота."""
     from handlers.messages import btn_settings
-    await btn_settings(message, state)
+    try:
+        await btn_settings(message, state)
+    except Exception as e:
+        await message.answer(f"Ошибка при запуске: {e}")
 
 
 @router.message(Command("help", "помощь"))
 async def cmd_help(message: Message, state: FSMContext):
     """Помощь — через меню бота."""
     from handlers.messages import btn_help
-    await btn_help(message, state)
+    try:
+        await btn_help(message, state)
+    except Exception as e:
+        await message.answer(f"Ошибка при запуске: {e}")
 
 
 # ─── Прочие команды ───────────────────────────────────────────────────────────
@@ -75,19 +90,28 @@ async def cmd_help(message: Message, state: FSMContext):
 @router.message(Command("план"))
 async def cmd_plan(message: Message):
     msg = await message.answer("Загружаю план...")
-    result = await orc.handle_message("покажи план")
-    await msg.edit_text(result, parse_mode="Markdown")
+    try:
+        result = await orc.handle_message("покажи план")
+        await msg.edit_text(result, parse_mode="Markdown")
+    except Exception as e:
+        await msg.edit_text(f"Ошибка: {e}")
 
 
 @router.message(Command("следующий"))
 async def cmd_next(message: Message):
     msg = await message.answer("Ищу следующий пост...")
-    result = await orc.handle_message("следующий пост по плану")
-    await msg.edit_text(result, parse_mode="Markdown")
+    try:
+        result = await orc.handle_message("следующий пост по плану")
+        await msg.edit_text(result, parse_mode="Markdown")
+    except Exception as e:
+        await msg.edit_text(f"Ошибка: {e}")
 
 
 @router.message(Command("стиль"))
 async def cmd_style(message: Message):
     msg = await message.answer("Загружаю стилевой профиль...")
-    result = await orc.handle_message("покажи стиль")
-    await msg.edit_text(result, parse_mode="Markdown")
+    try:
+        result = await orc.handle_message("покажи стиль")
+        await msg.edit_text(result, parse_mode="Markdown")
+    except Exception as e:
+        await msg.edit_text(f"Ошибка: {e}")
