@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 
 from saas.db import get_db
 from saas.encryption import encrypt_token
-from saas.platform_bot.states import RegisterStates, AddBotStates
+from saas.platform_bot.states import RegisterStates, AddBotStates, CatalogStates
 
 router = Router()
 
@@ -20,7 +20,8 @@ PLAN_LIMITS = {
 MAIN_KB = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🤖 Мои боты"), KeyboardButton(text="➕ Добавить бота")],
-        [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="💳 Подписка")],
+        [KeyboardButton(text="📋 Мой каталог"), KeyboardButton(text="📊 Статистика")],
+        [KeyboardButton(text="💳 Подписка"), KeyboardButton(text="🏠 Старт")],
     ],
     resize_keyboard=True
 )
@@ -259,6 +260,162 @@ async def show_subscription(message: Message):
         "   • Безлимит генераций, ботов и клиентов\n\n"
         "Для подключения платной подписки обратись к администратору."
     )
+
+
+# ─── Каталог услуг ───────────────────────────────────────────────────────────
+@router.message(F.text.contains("каталог") | F.text.contains("Каталог"))
+async def show_catalog(message: Message, state: FSMContext):
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        db = get_db()
+        tg_id = message.from_user.id
+        cw = _get_copywriter(tg_id)
+
+        if not cw:
+            await message.answer("Сначала зарегистрируйся — нажми /start")
+            return
+
+        # Берём первый бот мастера (любой, не только активный)
+        bot_row = db.table("bots").select("id, bot_username, catalog").eq("copywriter_id", cw["id"]).limit(1).execute()
+        if not bot_row.data:
+            await message.answer("У тебя пока нет бота. Нажми «Добавить бота»", reply_markup=MAIN_KB)
+            return
+
+        bot_rec = bot_row.data[0]
+        catalog = bot_rec.get("catalog") or []
+
+        catalog_kb = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="Добавить услугу")],
+                [KeyboardButton(text="Очистить каталог")],
+                [KeyboardButton(text="Назад в меню")],
+            ],
+            resize_keyboard=True
+        )
+
+        if catalog:
+            lines = [f"Каталог услуг бота @{bot_rec['bot_username']}:\n"]
+            for i, item in enumerate(catalog, 1):
+                lines.append(f"{i}. {item['title']} — {item.get('price', '?')}")
+                if item.get('description'):
+                    lines.append(f"   {item['description']}")
+            lines.append("\nНажми «Добавить услугу» для новой или «Назад в меню».")
+            await state.update_data(catalog_bot_id=bot_rec["id"])
+            await message.answer("\n".join(lines), reply_markup=catalog_kb)
+        else:
+            await message.answer(
+                f"Каталог бота @{bot_rec['bot_username']} пока пуст.\n\n"
+                "Нажми «Добавить услугу» чтобы добавить первую.",
+                reply_markup=catalog_kb
+            )
+            await state.update_data(catalog_bot_id=bot_rec["id"])
+    except Exception as e:
+        logger.error(f"Ошибка в show_catalog: {e}", exc_info=True)
+        await message.answer(f"Ошибка: {e}", reply_markup=MAIN_KB)
+
+
+@router.message(F.text == "Добавить услугу")
+async def catalog_add_start(message: Message, state: FSMContext):
+    await message.answer(
+        "Введи название услуги:\n(например: SEO-статья, Пост для Instagram)",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await state.set_state(CatalogStates.waiting_title)
+
+
+@router.message(CatalogStates.waiting_title)
+async def catalog_add_title(message: Message, state: FSMContext):
+    await state.update_data(catalog_title=message.text.strip())
+    await message.answer("Введи краткое описание услуги (или «-» если не нужно):")
+    await state.set_state(CatalogStates.waiting_description)
+
+
+@router.message(CatalogStates.waiting_description)
+async def catalog_add_description(message: Message, state: FSMContext):
+    desc = message.text.strip()
+    await state.update_data(catalog_description="" if desc == "-" else desc)
+    await message.answer("Введи цену услуги (например: «2000 ₽» или «от 500 ₽»):")
+    await state.set_state(CatalogStates.waiting_price)
+
+
+@router.message(CatalogStates.waiting_price)
+async def catalog_add_price(message: Message, state: FSMContext):
+    db = get_db()
+    tg_id = message.from_user.id
+    cw = _get_copywriter(tg_id)
+    data = await state.get_data()
+    await state.clear()
+
+    bot_id = data.get("catalog_bot_id")
+    if not bot_id:
+        # Если потерялся ID бота — берём первый
+        bot_row = db.table("bots").select("id, catalog").eq("copywriter_id", cw["id"]).limit(1).execute()
+        if not bot_row.data:
+            await message.answer("Бот не найден.", reply_markup=MAIN_KB)
+            return
+        bot_id = bot_row.data[0]["id"]
+        catalog = bot_row.data[0].get("catalog") or []
+    else:
+        bot_row = db.table("bots").select("catalog").eq("id", bot_id).execute()
+        catalog = bot_row.data[0].get("catalog") or [] if bot_row.data else []
+
+    new_item = {
+        "id": len(catalog) + 1,
+        "title": data["catalog_title"],
+        "description": data.get("catalog_description", ""),
+        "price": message.text.strip(),
+    }
+    catalog.append(new_item)
+
+    db.table("bots").update({"catalog": catalog}).eq("id", bot_id).execute()
+
+    await message.answer(
+        f"✅ Услуга «{new_item['title']}» добавлена в каталог!\n\n"
+        "Клиенты увидят её в боте по команде «🛍 Каталог услуг».",
+        reply_markup=MAIN_KB
+    )
+
+
+@router.message(F.text == "Очистить каталог")
+async def catalog_clear(message: Message, state: FSMContext):
+    db = get_db()
+    data = await state.get_data()
+    bot_id = data.get("catalog_bot_id")
+    if bot_id:
+        db.table("bots").update({"catalog": []}).eq("id", bot_id).execute()
+        await message.answer("Каталог очищен.", reply_markup=MAIN_KB)
+    else:
+        await message.answer("Бот не найден. Попробуй заново через Мой каталог.", reply_markup=MAIN_KB)
+    await state.clear()
+
+
+@router.message(F.text == "Назад в меню")
+async def catalog_back(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=MAIN_KB)
+
+
+@router.message(F.text == "🏠 Старт")
+async def btn_start(message: Message, state: FSMContext):
+    await state.clear()
+    name = message.from_user.first_name or "друг"
+    cw = _get_copywriter(message.from_user.id)
+    if cw:
+        name = cw.get("display_name") or name
+    await message.answer(f"👋 Привет, {name}!\nГлавное меню:", reply_markup=MAIN_KB)
+
+
+# ─── Fallback: любое неизвестное сообщение ───────────────────────────────────
+@router.message()
+async def fallback_handler(message: Message, state: FSMContext):
+    """Если пользователь потерял меню — возвращаем его."""
+    tg_id = message.from_user.id
+    cw = _get_copywriter(tg_id)
+    if cw:
+        await message.answer("Используй кнопки меню:", reply_markup=MAIN_KB)
+    else:
+        await message.answer("Напиши /start чтобы начать.")
 
 
 # ─── Вспомогательная функция ─────────────────────────────────────────────────

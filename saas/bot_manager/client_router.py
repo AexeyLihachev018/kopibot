@@ -13,7 +13,7 @@ from saas.db import get_db
 CLIENT_KB = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✍️ Написать текст")],
-        [KeyboardButton(text="📋 История текстов")],
+        [KeyboardButton(text="🛍 Каталог услуг"), KeyboardButton(text="📋 История текстов")],
     ],
     resize_keyboard=True
 )
@@ -110,6 +110,34 @@ def create_client_router(bot_record: dict) -> Router:
         except Exception as e:
             db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
             await message.answer(f"❌ Ошибка при генерации: {e}")
+
+    # ─── Каталог услуг ────────────────────────────────────────────────────────
+    @router.message(F.text == "🛍 Каталог услуг")
+    @router.message(Command("каталог"))
+    async def client_catalog(message: Message):
+        db = get_db()
+        # Загружаем актуальный каталог из БД по bot_id этого бота
+        bot_data = db.table("bots").select("catalog, bot_name").eq("id", bot_id).execute()
+        if not bot_data.data:
+            await message.answer("Каталог недоступен.")
+            return
+
+        catalog = bot_data.data[0].get("catalog") or []
+        bot_name = bot_data.data[0].get("bot_name", "")
+
+        if not catalog:
+            await message.answer("📋 Каталог услуг пока пуст.\nНапиши «✍️ Написать текст» чтобы сделать заказ.")
+            return
+
+        lines = [f"🛍 *Каталог услуг {bot_name}:*\n"]
+        for item in catalog:
+            lines.append(
+                f"• *{item['title']}*\n"
+                f"  {item.get('description', '')}\n"
+                f"  💰 {item.get('price', '')}"
+            )
+        lines.append("\nНажми «✍️ Написать текст» чтобы оформить заказ.")
+        await message.answer("\n".join(lines), parse_mode="Markdown")
 
     # ─── История текстов ──────────────────────────────────────────────────────
     @router.message(F.text == "📋 История текстов")

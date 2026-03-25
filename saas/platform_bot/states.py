@@ -8,3 +8,9 @@ class RegisterStates(StatesGroup):
 class AddBotStates(StatesGroup):
     waiting_token = State()      # Ждём токен от BotFather
     waiting_welcome = State()    # Ждём приветственное сообщение
+
+
+class CatalogStates(StatesGroup):
+    waiting_title = State()       # Название услуги
+    waiting_description = State() # Описание услуги
+    waiting_price = State()       # Цена услуги
