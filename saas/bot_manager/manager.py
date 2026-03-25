@@ -7,6 +7,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from saas.db import get_db
 from saas.encryption import decrypt_token
@@ -80,6 +81,14 @@ async def _start_bot(bot_record: dict):
     token = decrypt_token(bot_record["bot_token_encrypted"])
     bot = Bot(token=token)
     dp = Dispatcher(storage=MemoryStorage())
+
+    # Обновляем команды бота в Telegram (видны в меню /)
+    await bot.set_my_commands([
+        BotCommand(command="start",    description="Главное меню"),
+        BotCommand(command="write",    description="Написать текст"),
+        BotCommand(command="catalog",  description="Каталог услуг"),
+        BotCommand(command="history",  description="История текстов"),
+    ])
 
     # Подключаем роутер с обработчиками для клиентов
     dp.include_router(create_client_router(bot_record))

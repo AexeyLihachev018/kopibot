@@ -3,10 +3,14 @@
 Каждый бот получает одинаковые команды, но с данными своего копирайтера.
 """
 from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    Message, ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
+)
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters.callback_data import CallbackData
 
 from saas.db import get_db
 
@@ -24,6 +28,10 @@ class ClientStates(StatesGroup):
     waiting_topic = State()
 
 
+class OrderCallback(CallbackData, prefix="order"):
+    item_title: str
+
+
 def create_client_router(bot_record: dict) -> Router:
     """
     Создаёт роутер для конкретного бота.
@@ -32,7 +40,12 @@ def create_client_router(bot_record: dict) -> Router:
     router = Router()
     bot_id = bot_record["id"]
     copywriter_id = bot_record["copywriter_id"]
-    welcome_msg = bot_record.get("welcome_message", "Привет! Я помогу создать отличный контент.")
+    welcome_msg = bot_record.get("welcome_message") or (
+        "👋 Привет! Я помогу быстро создать профессиональный текст.\n\n"
+        "Нажми *«✍️ Написать текст»* — опиши тему, и через несколько секунд "
+        "получишь готовый пост для соцсетей, рассылки или сайта.\n\n"
+        "Хочешь узнать что умею? Загляни в *«🛍 Каталог услуг»*."
+    )
 
     # ─── /start ───────────────────────────────────────────────────────────────
     @router.message(CommandStart())
@@ -63,7 +76,15 @@ def create_client_router(bot_record: dict) -> Router:
     @router.message(F.text == "✍️ Написать текст")
     @router.message(Command("написать"))
     async def client_write(message: Message, state: FSMContext):
-        await message.answer("О чём написать текст? Введи тему:")
+        await message.answer(
+            "✍️ *Напиши тему — получишь готовый пост!*\n\n"
+            "Например:\n"
+            "• «5 причин начать бегать по утрам»\n"
+            "• «Обзор новинок осень-зима 2025»\n"
+            "• «Как мы помогли клиенту сэкономить 30%»\n\n"
+            "Чем конкретнее тема — тем лучше текст:",
+            parse_mode="Markdown"
+        )
         await state.set_state(ClientStates.waiting_topic)
 
     # ─── Ввод темы → генерация ────────────────────────────────────────────────
@@ -71,7 +92,24 @@ def create_client_router(bot_record: dict) -> Router:
     async def client_generate(message: Message, state: FSMContext):
         db = get_db()
         tg_id = message.from_user.id
-        topic = message.text.strip()
+        topic = message.text.strip() if message.text else ""
+        data = await state.get_data()
+        prefilled = data.get("prefilled_topic", "")
+
+        # Если пользователь нажал команду вместо темы — сбрасываем
+        if not topic or topic.startswith("/"):
+            if prefilled:
+                topic = prefilled  # используем выбранную услугу как тему
+            else:
+                await state.clear()
+                await message.answer(
+                    "Похоже, ты нажал команду вместо темы.\n"
+                    "Нажми «✍️ Написать текст» и введи тему текстом.",
+                    reply_markup=CLIENT_KB
+                )
+                return
+        elif prefilled:
+            topic = f"{prefilled}: {topic}"
 
         await state.clear()
         await message.answer("⏳ Генерирую текст...")
@@ -137,14 +175,20 @@ def create_client_router(bot_record: dict) -> Router:
             return
 
         lines = [f"🛍 *Каталог услуг {bot_name}:*\n"]
+        buttons = []
         for item in catalog:
             lines.append(
                 f"• *{item['title']}*\n"
                 f"  {item.get('description', '')}\n"
-                f"  💰 {item.get('price', '')}"
+                f"  💰 {item.get('price', '')}\n"
             )
-        lines.append("\nНажми «✍️ Написать текст» чтобы оформить заказ.")
-        await message.answer("\n".join(lines), parse_mode="Markdown")
+            buttons.append([InlineKeyboardButton(
+                text=f"📝 Заказать: {item['title'][:30]}",
+                callback_data=OrderCallback(item_title=item["title"]).pack()
+            )])
+
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=inline_kb)
 
     # ─── История текстов ──────────────────────────────────────────────────────
     @router.message(F.text == "📋 История текстов")
@@ -176,6 +220,18 @@ def create_client_router(bot_record: dict) -> Router:
             lines.append(f"{i}. [{date}] {o['topic'][:50]}")
 
         await message.answer("📋 Последние 10 текстов:\n\n" + "\n".join(lines))
+
+    # ─── Заказать услугу из каталога ─────────────────────────────────────────
+    @router.callback_query(OrderCallback.filter())
+    async def order_item(callback: CallbackQuery, callback_data: OrderCallback, state: FSMContext):
+        await callback.answer()
+        await state.update_data(prefilled_topic=callback_data.item_title)
+        await state.set_state(ClientStates.waiting_topic)
+        await callback.message.answer(
+            f"✅ Услуга выбрана: *{callback_data.item_title}*\n\n"
+            "Уточни детали или просто отправь любое сообщение чтобы начать:",
+            parse_mode="Markdown"
+        )
 
     return router
 
