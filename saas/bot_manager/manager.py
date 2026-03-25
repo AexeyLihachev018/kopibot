@@ -84,10 +84,11 @@ async def _start_bot(bot_record: dict):
 
     # Обновляем команды бота в Telegram (видны в меню /)
     await bot.set_my_commands([
-        BotCommand(command="start",    description="Главное меню"),
-        BotCommand(command="write",    description="Написать текст"),
-        BotCommand(command="catalog",  description="Каталог услуг"),
-        BotCommand(command="history",  description="История текстов"),
+        BotCommand(command="start",   description="🏠 Главное меню"),
+        BotCommand(command="write",   description="✍️ Написать текст"),
+        BotCommand(command="plan",    description="📅 Контент-план"),
+        BotCommand(command="catalog", description="🛍 Каталог услуг"),
+        BotCommand(command="history", description="📋 История текстов"),
     ])
 
     # Подключаем роутер с обработчиками для клиентов

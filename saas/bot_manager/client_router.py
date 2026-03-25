@@ -16,7 +16,7 @@ from saas.db import get_db
 
 CLIENT_KB = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="✍️ Написать текст")],
+        [KeyboardButton(text="✍️ Написать текст"), KeyboardButton(text="📅 Контент-план")],
         [KeyboardButton(text="🛍 Каталог услуг"), KeyboardButton(text="📋 История текстов")],
         [KeyboardButton(text="🏠 Старт")],
     ],
@@ -26,6 +26,7 @@ CLIENT_KB = ReplyKeyboardMarkup(
 
 class ClientStates(StatesGroup):
     waiting_topic = State()
+    waiting_plan_niche = State()
 
 
 class OrderCallback(CallbackData, prefix="order"):
@@ -190,6 +191,38 @@ def create_client_router(bot_record: dict) -> Router:
         inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=inline_kb)
 
+    # ─── Контент-план ─────────────────────────────────────────────────────────
+    @router.message(F.text == "📅 Контент-план")
+    @router.message(Command("plan"))
+    async def client_plan_start(message: Message, state: FSMContext):
+        await message.answer(
+            "📅 *Контент-план на неделю*\n\n"
+            "Напиши нишу или тему своего блога/бизнеса.\n\n"
+            "Например:\n"
+            "• «Фитнес и здоровое питание»\n"
+            "• «Продажа детской одежды»\n"
+            "• «Личный бренд коуча»",
+            parse_mode="Markdown"
+        )
+        await state.set_state(ClientStates.waiting_plan_niche)
+
+    @router.message(ClientStates.waiting_plan_niche)
+    async def client_plan_generate(message: Message, state: FSMContext):
+        niche = message.text.strip() if message.text else ""
+        if not niche or niche.startswith("/"):
+            await state.clear()
+            await message.answer("Введи нишу текстом, например: «Фитнес».", reply_markup=CLIENT_KB)
+            return
+
+        await state.clear()
+        await message.answer("⏳ Составляю контент-план на 7 дней...")
+
+        try:
+            plan = await _generate_content_plan(niche, bot_record)
+            await message.answer(plan, parse_mode="Markdown", reply_markup=CLIENT_KB)
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при генерации: {e}", reply_markup=CLIENT_KB)
+
     # ─── История текстов ──────────────────────────────────────────────────────
     @router.message(F.text == "📋 История текстов")
     @router.message(Command("история"))
@@ -234,6 +267,38 @@ def create_client_router(bot_record: dict) -> Router:
         )
 
     return router
+
+
+async def _generate_content_plan(niche: str, bot_record: dict) -> str:
+    """Генерирует контент-план на 7 дней через OpenRouter."""
+    import os
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
+        base_url="https://openrouter.ai/api/v1",
+    )
+    response = await client.chat.completions.create(
+        model="anthropic/claude-haiku-4-5",
+        messages=[
+            {
+                "role": "system",
+                "content": "Ты эксперт по контент-маркетингу. Составляй чёткие контент-планы."
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Составь контент-план на 7 дней для ниши: {niche}\n\n"
+                    "Формат каждого дня:\n"
+                    "📅 День N (День недели): [Тема поста]\n"
+                    "Тип: [обучение/продажа/развлечение/кейс/вопрос]\n\n"
+                    "В конце добавь 2-3 совета по публикации."
+                )
+            }
+        ],
+        max_tokens=1000,
+    )
+    return response.choices[0].message.content
 
 
 async def _generate_text(topic: str, bot_record: dict) -> str:
