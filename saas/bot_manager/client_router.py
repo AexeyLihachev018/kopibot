@@ -152,10 +152,10 @@ def create_client_router(bot_record: dict) -> Router:
             db.table("copywriters").update({
                 "generations_used": cw["generations_used"] + 1
             }).eq("id", copywriter_id).execute()
-            await message.answer(text)
+            await message.answer(text, reply_markup=CLIENT_KB)
         except Exception as e:
             db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
-            await message.answer(f"❌ Ошибка при генерации: {e}")
+            await message.answer(f"❌ Ошибка при генерации: {e}", reply_markup=CLIENT_KB)
 
     # ─── Каталог услуг ────────────────────────────────────────────────────────
     @router.message(F.text == "🛍 Каталог услуг")
@@ -219,7 +219,7 @@ def create_client_router(bot_record: dict) -> Router:
 
         try:
             plan = await _generate_content_plan(niche, bot_record)
-            await message.answer(plan, parse_mode="Markdown", reply_markup=CLIENT_KB)
+            await message.answer(plan + "\n\n_Что сделать дальше?_", parse_mode="Markdown", reply_markup=CLIENT_KB)
         except Exception as e:
             await message.answer(f"❌ Ошибка при генерации: {e}", reply_markup=CLIENT_KB)
 
