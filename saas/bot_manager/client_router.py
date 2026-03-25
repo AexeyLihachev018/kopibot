@@ -14,6 +14,7 @@ CLIENT_KB = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✍️ Написать текст")],
         [KeyboardButton(text="🛍 Каталог услуг"), KeyboardButton(text="📋 История текстов")],
+        [KeyboardButton(text="🏠 Старт")],
     ],
     resize_keyboard=True
 )
@@ -50,6 +51,12 @@ def create_client_router(bot_record: dict) -> Router:
                 "first_name": message.from_user.first_name,
             }).execute()
 
+        await message.answer(welcome_msg, reply_markup=CLIENT_KB)
+
+    # ─── Старт (сброс меню) ───────────────────────────────────────────────────
+    @router.message(F.text == "🏠 Старт")
+    async def client_home(message: Message, state: FSMContext):
+        await state.clear()
         await message.answer(welcome_msg, reply_markup=CLIENT_KB)
 
     # ─── Написать текст ───────────────────────────────────────────────────────
