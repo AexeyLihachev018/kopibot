@@ -68,8 +68,8 @@ async def _show_catalog_for_bot(message: Message, bot_id: str):
     inline_buttons = []
     for idx, item in enumerate(catalog):
         lines.append(
-            f"{idx + 1}. *{item['title']}* — {item.get('price', '?')}\n"
-            + (f"   {item['description']}\n" if item.get('description') else "")
+            f"{idx + 1}. <b>{item['title']}</b> — {item.get('price', '?')}"
+            + (f"\n   {item['description']}" if item.get('description') else "")
         )
         inline_buttons.append([
             InlineKeyboardButton(
@@ -79,8 +79,8 @@ async def _show_catalog_for_bot(message: Message, bot_id: str):
         ])
 
     inline_kb = InlineKeyboardMarkup(inline_keyboard=inline_buttons)
-    lines.append("\nНажми кнопку ниже чтобы удалить услугу, или используй меню.")
-    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=CATALOG_KB)
+    lines.append("\n⬇️ Кнопки ниже — удалить услугу. Меню — добавить ещё.")
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=CATALOG_KB)
     await message.answer("Управление услугами:", reply_markup=inline_kb)
 
 
@@ -389,7 +389,7 @@ async def catalog_choose_bot(message: Message, state: FSMContext):
 async def catalog_add_start(message: Message, state: FSMContext):
     await message.answer(
         "Введи название услуги:\n(например: SEO-статья, Пост для Instagram)",
-        reply_markup=ReplyKeyboardRemove()
+        reply_markup=CATALOG_KB,
     )
     await state.set_state(CatalogStates.waiting_title)
 
