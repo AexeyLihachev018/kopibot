@@ -355,7 +355,7 @@ async def _generate_with_openrouter(topic: str, api_key: str) -> bytes:
 
     prompt = (
         f"Professional social media post illustration for the topic: {topic[:200]}. "
-        "Landscape 16:9 format. Vibrant colors, cinematic composition, no text, no watermarks."
+        "Vibrant colors, cinematic composition, no text, no watermarks."
     )
     async with httpx.AsyncClient(timeout=90.0) as client:
         resp = await client.post(
@@ -365,25 +365,29 @@ async def _generate_with_openrouter(topic: str, api_key: str) -> bytes:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "google/gemini-2.5-flash-preview-05-20:thinking",
+                "model": "google/gemini-2.5-flash-image",
                 "messages": [{"role": "user", "content": prompt}],
-                "output_modalities": ["image"],
+                "modalities": ["image", "text"],
+                "image_config": {"aspect_ratio": "16:9"},
             },
         )
         resp.raise_for_status()
         data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        # content может быть списком или строкой с data-URL
-        items = content if isinstance(content, list) else [{"type": "text", "text": content}]
-        for item in items:
-            if isinstance(item, dict) and item.get("type") == "image_url":
-                img_url = item["image_url"]["url"]
-                if img_url.startswith("data:"):
-                    _, b64 = img_url.split(",", 1)
-                    return base64.b64decode(b64)
-                img_resp = await client.get(img_url)
-                return img_resp.content
-    raise RuntimeError("Изображение не получено от OpenRouter")
+        message = data["choices"][0]["message"]
+        # Изображение может быть в images[] или в content[]
+        images = message.get("images", [])
+        if not images:
+            content = message.get("content", [])
+            if isinstance(content, list):
+                images = [i for i in content if isinstance(i, dict) and i.get("type") == "image_url"]
+        if not images:
+            raise RuntimeError("Изображение не получено от OpenRouter")
+        img_url = images[0]["image_url"]["url"]
+        if img_url.startswith("data:"):
+            _, b64 = img_url.split(",", 1)
+            return base64.b64decode(b64)
+        img_resp = await client.get(img_url)
+        return img_resp.content
 
 
 async def _generate_with_horde(topic: str) -> bytes:
