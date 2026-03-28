@@ -292,7 +292,7 @@ def create_client_router(bot_record: dict) -> Router:
             return
 
         topic = order_row.data[0]["topic"]
-        wait_hint = "~5 сек" if os.getenv("FAL_KEY") else "~1–3 мин (бесплатный сервер)"
+        wait_hint = "~10–20 сек" if os.getenv("OPENROUTER_API_KEY") else "~1–3 мин (бесплатный сервер)"
         status_msg = await callback.message.answer(f"🖼 Генерирую картинку... {wait_hint}")
         try:
             image_bytes = await _generate_image(topic)
@@ -340,32 +340,50 @@ async def _generate_content_plan(niche: str, bot_record: dict) -> str:
 
 
 async def _generate_image(topic: str) -> bytes:
-    """Генерирует изображение: fal.ai (если FAL_KEY) или Stable Horde (бесплатно)."""
+    """Генерирует изображение: Gemini 2.5 Flash Image через OpenRouter или Stable Horde (бесплатно)."""
     import os
-    fal_key = os.getenv("FAL_KEY", "")
-    if fal_key:
-        return await _generate_with_fal(topic, fal_key)
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    if api_key:
+        return await _generate_with_openrouter(topic, api_key)
     return await _generate_with_horde(topic)
 
 
-async def _generate_with_fal(topic: str, api_key: str) -> bytes:
-    """FLUX.1-schnell через fal.ai — быстро (~5 сек), 16:9."""
+async def _generate_with_openrouter(topic: str, api_key: str) -> bytes:
+    """Gemini 2.5 Flash Image (NanoBanana Flash) через OpenRouter — ~$0.039/img, 16:9."""
+    import base64
     import httpx
 
     prompt = (
-        f"Professional social media post illustration: {topic[:200]}. "
-        "Vibrant colors, cinematic composition, no text, no watermarks."
+        f"Professional social media post illustration for the topic: {topic[:200]}. "
+        "Landscape 16:9 format. Vibrant colors, cinematic composition, no text, no watermarks."
     )
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=90.0) as client:
         resp = await client.post(
-            "https://fal.run/fal-ai/flux/schnell",
-            headers={"Authorization": f"Key {api_key}"},
-            json={"prompt": prompt, "image_size": "landscape_16_9", "num_images": 1},
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "google/gemini-2.5-flash-preview-05-20:thinking",
+                "messages": [{"role": "user", "content": prompt}],
+                "output_modalities": ["image"],
+            },
         )
         resp.raise_for_status()
-        image_url = resp.json()["images"][0]["url"]
-        img_resp = await client.get(image_url)
-        return img_resp.content
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        # content может быть списком или строкой с data-URL
+        items = content if isinstance(content, list) else [{"type": "text", "text": content}]
+        for item in items:
+            if isinstance(item, dict) and item.get("type") == "image_url":
+                img_url = item["image_url"]["url"]
+                if img_url.startswith("data:"):
+                    _, b64 = img_url.split(",", 1)
+                    return base64.b64decode(b64)
+                img_resp = await client.get(img_url)
+                return img_resp.content
+    raise RuntimeError("Изображение не получено от OpenRouter")
 
 
 async def _generate_with_horde(topic: str) -> bytes:
