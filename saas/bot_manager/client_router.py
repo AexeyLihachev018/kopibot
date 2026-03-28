@@ -18,7 +18,7 @@ CLIENT_KB = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✍️ Написать текст"), KeyboardButton(text="📅 Контент-план")],
         [KeyboardButton(text="🛍 Каталог услуг"), KeyboardButton(text="📋 История текстов")],
-        [KeyboardButton(text="🏠 Старт")],
+        [KeyboardButton(text="🔥 Тренды"), KeyboardButton(text="🏠 Старт")],
     ],
     resize_keyboard=True
 )
@@ -27,6 +27,8 @@ CLIENT_KB = ReplyKeyboardMarkup(
 class ClientStates(StatesGroup):
     waiting_topic = State()
     waiting_plan_niche = State()
+    waiting_trend_niche = State()
+    waiting_trend_topic = State()
 
 
 class OrderCallback(CallbackData, prefix="order"):
@@ -35,6 +37,14 @@ class OrderCallback(CallbackData, prefix="order"):
 
 class ImageCallback(CallbackData, prefix="img"):
     order_id: str
+
+
+class TrendTypeCallback(CallbackData, prefix="ttype"):
+    search_type: str  # "niche" or "topic"
+
+
+class WriteFromTrendCallback(CallbackData, prefix="wtren"):
+    idx: int  # 0, 1, 2
 
 
 def create_client_router(bot_record: dict) -> Router:
@@ -279,6 +289,115 @@ def create_client_router(bot_record: dict) -> Router:
             parse_mode="Markdown"
         )
 
+    # ─── Тренды ───────────────────────────────────────────────────────────────
+    @router.message(F.text == "🔥 Тренды")
+    async def client_trends(message: Message, state: FSMContext):
+        await state.clear()
+        trend_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎯 Поиск по нише", callback_data=TrendTypeCallback(search_type="niche").pack())],
+            [InlineKeyboardButton(text="🔍 Поиск по теме", callback_data=TrendTypeCallback(search_type="topic").pack())],
+        ])
+        await message.answer(
+            "🔥 *Поиск трендов*\n\n"
+            "Выбери тип поиска:",
+            parse_mode="Markdown",
+            reply_markup=trend_kb,
+        )
+
+    @router.callback_query(TrendTypeCallback.filter())
+    async def trend_type_selected(callback: CallbackQuery, callback_data: TrendTypeCallback, state: FSMContext):
+        await callback.answer()
+        if callback_data.search_type == "niche":
+            await callback.message.answer(
+                "🎯 Введи нишу для поиска трендов.\n\n"
+                "Например: «Фитнес», «Онлайн-образование», «Ремонт квартир»:"
+            )
+            await state.set_state(ClientStates.waiting_trend_niche)
+        else:
+            await callback.message.answer(
+                "🔍 Введи конкретную тему для поиска трендов.\n\n"
+                "Например: «ChatGPT», «маркетплейсы», «пассивный доход»:"
+            )
+            await state.set_state(ClientStates.waiting_trend_topic)
+
+    @router.message(ClientStates.waiting_trend_niche)
+    async def client_trend_niche_input(message: Message, state: FSMContext):
+        query = message.text.strip() if message.text else ""
+        if not query or query.startswith("/"):
+            await state.clear()
+            await message.answer("Введи нишу текстом.", reply_markup=CLIENT_KB)
+            return
+        await state.clear()
+        status_msg = await message.answer(f"🔍 Ищу тренды в нише «{query}»...")
+        try:
+            topics = await _search_trends(query, search_type="niche")
+            await _send_trend_results(message, status_msg, topics, state)
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Ошибка поиска трендов: {e}")
+
+    @router.message(ClientStates.waiting_trend_topic)
+    async def client_trend_topic_input(message: Message, state: FSMContext):
+        query = message.text.strip() if message.text else ""
+        if not query or query.startswith("/"):
+            await state.clear()
+            await message.answer("Введи тему текстом.", reply_markup=CLIENT_KB)
+            return
+        await state.clear()
+        status_msg = await message.answer(f"🔍 Ищу тренды по теме «{query}»...")
+        try:
+            topics = await _search_trends(query, search_type="topic")
+            await _send_trend_results(message, status_msg, topics, state)
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Ошибка поиска трендов: {e}")
+
+    @router.callback_query(WriteFromTrendCallback.filter())
+    async def write_from_trend(callback: CallbackQuery, callback_data: WriteFromTrendCallback, state: FSMContext):
+        await callback.answer()
+        data = await state.get_data()
+        trend_topics = data.get("trend_topics", [])
+        if not trend_topics or callback_data.idx >= len(trend_topics):
+            await callback.message.answer("❌ Темы не найдены. Попробуй поиск заново.", reply_markup=CLIENT_KB)
+            return
+        topic = trend_topics[callback_data.idx]
+        await state.clear()
+        await callback.message.answer(f"⏳ Пишу пост на тему:\n«{topic}»...")
+
+        db = get_db()
+        tg_id = callback.from_user.id
+        client = db.table("clients").select("id").eq("bot_id", bot_id).eq("telegram_user_id", tg_id).execute()
+        if not client.data:
+            await callback.message.answer("Ошибка: клиент не найден. Напиши /start")
+            return
+        client_id = client.data[0]["id"]
+
+        cw = db.table("copywriters").select("plan, generations_used").eq("id", copywriter_id).execute().data[0]
+        limits = {"free": 10, "basic": 100, "pro": 99999}
+        if cw["generations_used"] >= limits.get(cw["plan"], 10):
+            await callback.message.answer("😔 Лимит генераций исчерпан. Попробуй позже.")
+            return
+
+        order = db.table("orders").insert({
+            "client_id": client_id,
+            "bot_id": bot_id,
+            "copywriter_id": copywriter_id,
+            "topic": topic,
+            "status": "pending",
+        }).execute().data[0]
+        order_id = order["id"]
+
+        try:
+            text = await _generate_text(topic, bot_record)
+            db.table("orders").update({"generated_text": text, "status": "done"}).eq("id", order_id).execute()
+            db.table("copywriters").update({"generations_used": cw["generations_used"] + 1}).eq("id", copywriter_id).execute()
+            img_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🖼 Картинка", callback_data=ImageCallback(order_id=str(order_id)).pack())
+            ]])
+            await callback.message.answer(text, reply_markup=img_kb)
+            await callback.message.answer("Выбери действие:", reply_markup=CLIENT_KB)
+        except Exception as e:
+            db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
+            await callback.message.answer(f"❌ Ошибка генерации: {e}", reply_markup=CLIENT_KB)
+
     # ─── Генерация картинки по посту ─────────────────────────────────────────
     @router.callback_query(ImageCallback.filter())
     async def generate_image(callback: CallbackQuery, callback_data: ImageCallback):
@@ -447,6 +566,59 @@ async def _generate_with_horde(topic: str) -> bytes:
                 return base64.b64decode(generations[0]["img"])
 
     raise RuntimeError("Превышено время ожидания. Попробуй ещё раз.")
+
+
+async def _send_trend_results(message: Message, status_msg, topics: list, state: FSMContext):
+    """Отправляет результаты поиска трендов с кнопками написания постов."""
+    await state.update_data(trend_topics=topics)
+    await status_msg.delete()
+    lines = ["🔥 *Топ-3 трендовых темы:*\n"]
+    for i, t in enumerate(topics, 1):
+        lines.append(f"{i}. {t}")
+    buttons = [[
+        InlineKeyboardButton(
+            text=f"✍️ Написать пост {i + 1}",
+            callback_data=WriteFromTrendCallback(idx=i).pack(),
+        )
+    ] for i in range(len(topics))]
+    trend_result_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=trend_result_kb)
+
+
+async def _search_trends(query: str, search_type: str) -> list:
+    """Поиск трендовых тем через Perplexity (TrendScout) via OpenRouter."""
+    import os
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
+        base_url="https://openrouter.ai/api/v1",
+    )
+
+    if search_type == "niche":
+        prompt = (
+            f"Найди 3 самых актуальных и трендовых темы для постов в соцсетях в нише: «{query}».\n"
+            "Темы должны быть конкретными, цепляющими и актуальными прямо сейчас.\n"
+            "Верни ровно 3 темы, каждую с новой строки, без нумерации и без пояснений. Только темы."
+        )
+    else:
+        prompt = (
+            f"Найди 3 актуальных угла подачи для постов в соцсетях по теме: «{query}».\n"
+            "Каждый угол — конкретная, цепляющая тема поста.\n"
+            "Верни ровно 3 темы, каждую с новой строки, без нумерации и без пояснений. Только темы."
+        )
+
+    response = await client.chat.completions.create(
+        model="perplexity/sonar",
+        messages=[
+            {"role": "system", "content": "Ты эксперт по трендам в социальных сетях. Отвечай только на русском языке."},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=300,
+    )
+    raw = response.choices[0].message.content.strip()
+    topics = [line.strip("•-– ").strip() for line in raw.splitlines() if line.strip()]
+    return topics[:3]
 
 
 async def _generate_text(topic: str, bot_record: dict) -> str:
