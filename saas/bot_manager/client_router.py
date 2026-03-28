@@ -335,21 +335,34 @@ async def _generate_content_plan(niche: str, bot_record: dict) -> str:
 
 
 async def _generate_image(topic: str) -> bytes:
-    """Генерирует изображение 16:9 через Pollinations.ai (Flux, бесплатно). Возвращает байты."""
+    """Генерирует изображение через HuggingFace Inference API (SDXL, бесплатно)."""
+    import os
+    import asyncio
     import httpx
-    import urllib.parse
 
     prompt = (
-        f"Professional social media illustration for a post about: {topic}. "
-        "Cinematic composition, vibrant colors, no text, photorealistic."
+        f"Professional social media post illustration: {topic[:200]}. "
+        "High quality, vibrant colors, cinematic composition, no text, no watermarks."
     )
-    encoded = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded}?width=1280&height=720&model=flux&nologo=true"
+    headers = {}
+    hf_token = os.getenv("HF_TOKEN", "")
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
 
-    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return response.content
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for attempt in range(3):
+            response = await client.post(
+                "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
+                headers=headers,
+                json={"inputs": prompt, "parameters": {"width": 1344, "height": 768}},
+            )
+            if response.status_code == 503:
+                # Модель загружается, ждём и повторяем
+                await asyncio.sleep(20)
+                continue
+            response.raise_for_status()
+            return response.content
+    raise RuntimeError("Модель недоступна, попробуй позже.")
 
 
 async def _generate_text(topic: str, bot_record: dict) -> str:
