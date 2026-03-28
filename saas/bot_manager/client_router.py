@@ -80,6 +80,7 @@ def create_client_router(bot_record: dict) -> Router:
     # ─── Написать текст ───────────────────────────────────────────────────────
     @router.message(F.text == "✍️ Написать текст")
     @router.message(Command("написать"))
+    @router.message(Command("write"))
     async def client_write(message: Message, state: FSMContext):
         await message.answer(
             "✍️ *Напиши тему — получишь готовый пост!*\n\n"
@@ -163,6 +164,8 @@ def create_client_router(bot_record: dict) -> Router:
                 )
             ]])
             await message.answer(text, reply_markup=img_kb)
+            # Явно восстанавливаем reply-клавиатуру после inline-кнопок
+            await message.answer("Выбери действие:", reply_markup=CLIENT_KB)
         except Exception as e:
             db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
             await message.answer(f"❌ Ошибка при генерации: {e}", reply_markup=CLIENT_KB)
@@ -288,7 +291,7 @@ def create_client_router(bot_record: dict) -> Router:
             return
 
         topic = order_row.data[0]["topic"]
-        status_msg = await callback.message.answer("⏳ Генерирую картинку (~15 сек)...")
+        status_msg = await callback.message.answer("⏳ Генерирую картинку (~1–2 мин)...")
         try:
             image_bytes = await _generate_image(topic)
             await status_msg.delete()
@@ -335,34 +338,63 @@ async def _generate_content_plan(niche: str, bot_record: dict) -> str:
 
 
 async def _generate_image(topic: str) -> bytes:
-    """Генерирует изображение через HuggingFace Inference API (SDXL, бесплатно)."""
-    import os
+    """Генерирует изображение через Stable Horde (бесплатно, без API-ключа, SDXL)."""
     import asyncio
+    import base64
     import httpx
 
     prompt = (
         f"Professional social media post illustration: {topic[:200]}. "
-        "High quality, vibrant colors, cinematic composition, no text, no watermarks."
+        "High quality, vibrant colors, cinematic composition, no text, no watermarks, 16:9"
     )
-    headers = {}
-    hf_token = os.getenv("HF_TOKEN", "")
-    if hf_token:
-        headers["Authorization"] = f"Bearer {hf_token}"
+    headers = {"apikey": "0000000000", "Content-Type": "application/json"}
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        for attempt in range(3):
-            response = await client.post(
-                "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # Отправляем запрос на генерацию
+        resp = await client.post(
+            "https://stablehorde.net/api/v2/generate/async",
+            headers=headers,
+            json={
+                "prompt": prompt,
+                "params": {
+                    "width": 1024,
+                    "height": 576,
+                    "steps": 20,
+                    "cfg_scale": 7,
+                    "sampler_name": "k_euler",
+                    "karras": True,
+                },
+                "models": ["Stable Diffusion XL 1.0"],
+                "r2": False,
+                "nsfw": False,
+                "slow_workers": True,
+            },
+        )
+        resp.raise_for_status()
+        gen_id = resp.json()["id"]
+
+    # Ждём завершения (максимум 5 минут)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for _ in range(60):
+            await asyncio.sleep(5)
+            check = await client.get(
+                f"https://stablehorde.net/api/v2/generate/check/{gen_id}",
                 headers=headers,
-                json={"inputs": prompt, "parameters": {"width": 1344, "height": 768}},
             )
-            if response.status_code == 503:
-                # Модель загружается, ждём и повторяем
-                await asyncio.sleep(20)
-                continue
-            response.raise_for_status()
-            return response.content
-    raise RuntimeError("Модель недоступна, попробуй позже.")
+            data = check.json()
+            if data.get("faulted"):
+                raise RuntimeError("Ошибка генерации на сервере, попробуй ещё раз")
+            if data.get("done"):
+                status = await client.get(
+                    f"https://stablehorde.net/api/v2/generate/status/{gen_id}",
+                    headers=headers,
+                )
+                generations = status.json().get("generations", [])
+                if not generations:
+                    raise RuntimeError("Изображение не получено от сервера")
+                return base64.b64decode(generations[0]["img"])
+
+    raise RuntimeError("Превышено время ожидания (5 мин). Попробуй ещё раз.")
 
 
 async def _generate_text(topic: str, bot_record: dict) -> str:
