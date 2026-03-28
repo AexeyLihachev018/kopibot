@@ -33,6 +33,10 @@ class OrderCallback(CallbackData, prefix="order"):
     item_title: str
 
 
+class ImageCallback(CallbackData, prefix="img"):
+    order_id: str
+
+
 def create_client_router(bot_record: dict) -> Router:
     """
     Создаёт роутер для конкретного бота.
@@ -152,7 +156,13 @@ def create_client_router(bot_record: dict) -> Router:
             db.table("copywriters").update({
                 "generations_used": cw["generations_used"] + 1
             }).eq("id", copywriter_id).execute()
-            await message.answer(text, reply_markup=CLIENT_KB)
+            img_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🖼 Картинка",
+                    callback_data=ImageCallback(order_id=str(order_id)).pack(),
+                )
+            ]])
+            await message.answer(text, reply_markup=img_kb)
         except Exception as e:
             db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
             await message.answer(f"❌ Ошибка при генерации: {e}", reply_markup=CLIENT_KB)
@@ -266,6 +276,28 @@ def create_client_router(bot_record: dict) -> Router:
             parse_mode="Markdown"
         )
 
+    # ─── Генерация картинки по посту ─────────────────────────────────────────
+    @router.callback_query(ImageCallback.filter())
+    async def generate_image(callback: CallbackQuery, callback_data: ImageCallback):
+        await callback.answer()
+        db = get_db()
+        order_row = db.table("orders").select("topic").eq("id", callback_data.order_id).execute()
+        if not order_row.data:
+            await callback.message.answer("❌ Заказ не найден.")
+            return
+
+        topic = order_row.data[0]["topic"]
+        status_msg = await callback.message.answer("⏳ Генерирую картинку...")
+        try:
+            image_url = await _generate_image(topic)
+            await status_msg.delete()
+            await callback.message.answer_photo(
+                photo=image_url,
+                caption=f"🖼 Иллюстрация к посту: {topic[:80]}",
+            )
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Не удалось сгенерировать картинку: {e}")
+
     return router
 
 
@@ -299,6 +331,36 @@ async def _generate_content_plan(niche: str, bot_record: dict) -> str:
         max_tokens=1000,
     )
     return response.choices[0].message.content
+
+
+async def _generate_image(topic: str) -> str:
+    """Генерирует изображение 16:9 через OpenRouter (flux-schnell). Возвращает URL."""
+    import os
+    import httpx
+
+    api_key = os.getenv("OPENROUTER_API_KEY", "")
+    prompt = (
+        f"A high-quality professional illustration for a social media post about: {topic}. "
+        "Cinematic composition, vibrant colors, no text."
+    )
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        response = await client.post(
+            "https://openrouter.ai/api/v1/images/generations",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "black-forest-labs/flux-schnell",
+                "prompt": prompt,
+                "width": 1280,
+                "height": 720,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["data"][0]["url"]
 
 
 async def _generate_text(topic: str, bot_record: dict) -> str:
