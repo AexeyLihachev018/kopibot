@@ -279,6 +279,7 @@ def create_client_router(bot_record: dict) -> Router:
     # ─── Генерация картинки по посту ─────────────────────────────────────────
     @router.callback_query(ImageCallback.filter())
     async def generate_image(callback: CallbackQuery, callback_data: ImageCallback):
+        from aiogram.types import BufferedInputFile
         await callback.answer()
         db = get_db()
         order_row = db.table("orders").select("topic").eq("id", callback_data.order_id).execute()
@@ -287,13 +288,13 @@ def create_client_router(bot_record: dict) -> Router:
             return
 
         topic = order_row.data[0]["topic"]
-        status_msg = await callback.message.answer("⏳ Генерирую картинку...")
+        status_msg = await callback.message.answer("⏳ Генерирую картинку (~15 сек)...")
         try:
-            image_url = await _generate_image(topic)
+            image_bytes = await _generate_image(topic)
             await status_msg.delete()
             await callback.message.answer_photo(
-                photo=image_url,
-                caption=f"🖼 Иллюстрация к посту: {topic[:80]}",
+                photo=BufferedInputFile(image_bytes, filename="image.jpg"),
+                caption=f"🖼 {topic[:100]}",
             )
         except Exception as e:
             await status_msg.edit_text(f"❌ Не удалось сгенерировать картинку: {e}")
@@ -333,34 +334,22 @@ async def _generate_content_plan(niche: str, bot_record: dict) -> str:
     return response.choices[0].message.content
 
 
-async def _generate_image(topic: str) -> str:
-    """Генерирует изображение 16:9 через OpenRouter (flux-schnell). Возвращает URL."""
-    import os
+async def _generate_image(topic: str) -> bytes:
+    """Генерирует изображение 16:9 через Pollinations.ai (Flux, бесплатно). Возвращает байты."""
     import httpx
+    import urllib.parse
 
-    api_key = os.getenv("OPENROUTER_API_KEY", "")
     prompt = (
-        f"A high-quality professional illustration for a social media post about: {topic}. "
-        "Cinematic composition, vibrant colors, no text."
+        f"Professional social media illustration for a post about: {topic}. "
+        "Cinematic composition, vibrant colors, no text, photorealistic."
     )
+    encoded = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded}?width=1280&height=720&model=flux&nologo=true"
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        response = await client.post(
-            "https://openrouter.ai/api/v1/images/generations",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "black-forest-labs/flux-schnell",
-                "prompt": prompt,
-                "width": 1280,
-                "height": 720,
-            },
-        )
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+        response = await client.get(url)
         response.raise_for_status()
-        data = response.json()
-        return data["data"][0]["url"]
+        return response.content
 
 
 async def _generate_text(topic: str, bot_record: dict) -> str:
