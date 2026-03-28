@@ -282,6 +282,7 @@ def create_client_router(bot_record: dict) -> Router:
     # ─── Генерация картинки по посту ─────────────────────────────────────────
     @router.callback_query(ImageCallback.filter())
     async def generate_image(callback: CallbackQuery, callback_data: ImageCallback):
+        import os
         from aiogram.types import BufferedInputFile
         await callback.answer()
         db = get_db()
@@ -291,7 +292,8 @@ def create_client_router(bot_record: dict) -> Router:
             return
 
         topic = order_row.data[0]["topic"]
-        status_msg = await callback.message.answer("⏳ Генерирую картинку (~1–2 мин)...")
+        wait_hint = "~5 сек" if os.getenv("FAL_KEY") else "~1–3 мин (бесплатный сервер)"
+        status_msg = await callback.message.answer(f"🖼 Генерирую картинку... {wait_hint}")
         try:
             image_bytes = await _generate_image(topic)
             await status_msg.delete()
@@ -338,44 +340,72 @@ async def _generate_content_plan(niche: str, bot_record: dict) -> str:
 
 
 async def _generate_image(topic: str) -> bytes:
-    """Генерирует изображение через Stable Horde (бесплатно, без API-ключа, SDXL)."""
+    """Генерирует изображение: fal.ai (если FAL_KEY) или Stable Horde (бесплатно)."""
+    import os
+    fal_key = os.getenv("FAL_KEY", "")
+    if fal_key:
+        return await _generate_with_fal(topic, fal_key)
+    return await _generate_with_horde(topic)
+
+
+async def _generate_with_fal(topic: str, api_key: str) -> bytes:
+    """FLUX.1-schnell через fal.ai — быстро (~5 сек), 16:9."""
+    import httpx
+
+    prompt = (
+        f"Professional social media post illustration: {topic[:200]}. "
+        "Vibrant colors, cinematic composition, no text, no watermarks."
+    )
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            "https://fal.run/fal-ai/flux/schnell",
+            headers={"Authorization": f"Key {api_key}"},
+            json={"prompt": prompt, "image_size": "landscape_16_9", "num_images": 1},
+        )
+        resp.raise_for_status()
+        image_url = resp.json()["images"][0]["url"]
+        img_resp = await client.get(image_url)
+        return img_resp.content
+
+
+async def _generate_with_horde(topic: str) -> bytes:
+    """Stable Horde — бесплатно, любая SD-модель (1–3 мин)."""
     import asyncio
     import base64
     import httpx
 
     prompt = (
         f"Professional social media post illustration: {topic[:200]}. "
-        "High quality, vibrant colors, cinematic composition, no text, no watermarks, 16:9"
+        "High quality, vibrant colors, cinematic composition, no text, no watermarks."
     )
     headers = {"apikey": "0000000000", "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        # Отправляем запрос на генерацию
         resp = await client.post(
             "https://stablehorde.net/api/v2/generate/async",
             headers=headers,
             json={
                 "prompt": prompt,
                 "params": {
-                    "width": 1024,
-                    "height": 576,
-                    "steps": 20,
+                    "width": 512,
+                    "height": 512,
+                    "steps": 15,
                     "cfg_scale": 7,
                     "sampler_name": "k_euler",
                     "karras": True,
+                    "n": 1,
                 },
-                "models": ["Stable Diffusion XL 1.0"],
                 "r2": False,
                 "nsfw": False,
                 "slow_workers": True,
+                "censor_nsfw": True,
             },
         )
         resp.raise_for_status()
         gen_id = resp.json()["id"]
 
-    # Ждём завершения (максимум 5 минут)
     async with httpx.AsyncClient(timeout=30.0) as client:
-        for _ in range(60):
+        for _ in range(72):  # до 6 минут
             await asyncio.sleep(5)
             check = await client.get(
                 f"https://stablehorde.net/api/v2/generate/check/{gen_id}",
@@ -383,7 +413,7 @@ async def _generate_image(topic: str) -> bytes:
             )
             data = check.json()
             if data.get("faulted"):
-                raise RuntimeError("Ошибка генерации на сервере, попробуй ещё раз")
+                raise RuntimeError("Ошибка на сервере генерации, попробуй ещё раз")
             if data.get("done"):
                 status = await client.get(
                     f"https://stablehorde.net/api/v2/generate/status/{gen_id}",
@@ -391,10 +421,10 @@ async def _generate_image(topic: str) -> bytes:
                 )
                 generations = status.json().get("generations", [])
                 if not generations:
-                    raise RuntimeError("Изображение не получено от сервера")
+                    raise RuntimeError("Изображение не получено")
                 return base64.b64decode(generations[0]["img"])
 
-    raise RuntimeError("Превышено время ожидания (5 мин). Попробуй ещё раз.")
+    raise RuntimeError("Превышено время ожидания. Попробуй ещё раз.")
 
 
 async def _generate_text(topic: str, bot_record: dict) -> str:
