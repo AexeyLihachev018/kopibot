@@ -35,7 +35,7 @@ class ClientStates(StatesGroup):
 
 
 class OrderCallback(CallbackData, prefix="order"):
-    item_title: str
+    item_idx: int
 
 
 class ImageCallback(CallbackData, prefix="img"):
@@ -210,7 +210,7 @@ def create_client_router(bot_record: dict) -> Router:
 
         lines = [f"🛍 *Каталог услуг {bot_name}:*\n"]
         buttons = []
-        for item in catalog:
+        for idx, item in enumerate(catalog):
             lines.append(
                 f"• *{item['title']}*\n"
                 f"  {item.get('description', '')}\n"
@@ -218,7 +218,7 @@ def create_client_router(bot_record: dict) -> Router:
             )
             buttons.append([InlineKeyboardButton(
                 text=f"📝 Заказать: {item['title'][:30]}",
-                callback_data=OrderCallback(item_title=item["title"]).pack()
+                callback_data=OrderCallback(item_idx=idx).pack()
             )])
 
         inline_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -292,10 +292,17 @@ def create_client_router(bot_record: dict) -> Router:
     @router.callback_query(OrderCallback.filter())
     async def order_item(callback: CallbackQuery, callback_data: OrderCallback, state: FSMContext):
         await callback.answer()
-        await state.update_data(prefilled_topic=callback_data.item_title)
+        db = get_db()
+        bot_data = db.table("bots").select("catalog").eq("id", bot_id).execute()
+        catalog = bot_data.data[0].get("catalog") or [] if bot_data.data else []
+        if callback_data.item_idx >= len(catalog):
+            await callback.message.answer("❌ Услуга не найдена.")
+            return
+        item_title = catalog[callback_data.item_idx]["title"]
+        await state.update_data(prefilled_topic=item_title)
         await state.set_state(ClientStates.waiting_topic)
         await callback.message.answer(
-            f"✅ Услуга выбрана: *{callback_data.item_title}*\n\n"
+            f"✅ Услуга выбрана: *{item_title}*\n\n"
             "Уточни детали или просто отправь любое сообщение чтобы начать:",
             parse_mode="Markdown"
         )
