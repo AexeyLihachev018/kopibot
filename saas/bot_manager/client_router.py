@@ -59,10 +59,13 @@ def create_client_router(bot_record: dict) -> Router:
     bot_id = bot_record["id"]
     copywriter_id = bot_record["copywriter_id"]
     welcome_msg = bot_record.get("welcome_message") or (
-        "👋 Привет! Я помогу быстро создать профессиональный текст.\n\n"
-        "Нажми *«✍️ Написать текст»* — опиши тему, и через несколько секунд "
-        "получишь готовый пост для соцсетей, рассылки или сайта.\n\n"
-        "Хочешь узнать что умею? Загляни в *«🛍 Каталог услуг»*."
+        "👋 Привет! Я — бот-копирайтер. Пишу готовые тексты для соцсетей за 10-15 секунд.\n\n"
+        "Как это работает:\n"
+        "1️⃣ Нажми *«✍️ Написать текст»*\n"
+        "2️⃣ Опиши тему одним предложением\n"
+        "3️⃣ Получи готовый пост + картинку\n\n"
+        "Это бесплатно. Тексты сохраняются в *«📋 История текстов»*.\n\n"
+        "Хочешь узнать все возможности? Загляни в *«🛍 Каталог услуг»*."
     )
 
     # ─── /start ───────────────────────────────────────────────────────────────
@@ -131,7 +134,7 @@ def create_client_router(bot_record: dict) -> Router:
             topic = f"{prefilled}: {topic}"
 
         await state.clear()
-        await message.answer("⏳ Генерирую текст...")
+        await message.answer("⏳ Генерирую текст... обычно 10-15 секунд")
 
         # Получаем клиента
         client = db.table("clients").select("id").eq("bot_id", bot_id).eq("telegram_user_id", tg_id).execute()
@@ -177,8 +180,12 @@ def create_client_router(bot_record: dict) -> Router:
                 )
             ]])
             await message.answer(text, reply_markup=img_kb)
-            # Явно восстанавливаем reply-клавиатуру после inline-кнопок
-            await message.answer("✅ Готово! Выбери следующее действие:", reply_markup=CLIENT_KB)
+            await message.answer(
+                "💾 Текст сохранён в истории.\n"
+                "Хочешь картинку к нему — нажми 🖼 Картинка.\n"
+                "Или напиши новую тему.",
+                reply_markup=CLIENT_KB,
+            )
         except Exception as e:
             db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
             await message.answer(f"❌ Ошибка при генерации: {e}", reply_markup=CLIENT_KB)
@@ -301,8 +308,6 @@ def create_client_router(bot_record: dict) -> Router:
             [InlineKeyboardButton(text="🎯 Поиск по нише", callback_data=TrendTypeCallback(search_type="niche").pack())],
             [InlineKeyboardButton(text="🔍 Поиск по теме", callback_data=TrendTypeCallback(search_type="topic").pack())],
             [InlineKeyboardButton(text="👥 Анализ аудитории", callback_data=TrendTypeCallback(search_type="audience").pack())],
-            [InlineKeyboardButton(text="🌐 Мульти-платформы (Google+Reddit+AI)", callback_data=TrendTypeCallback(search_type="multi").pack())],
-            [InlineKeyboardButton(text="📊 Apify Тренды (Google Trends API)", callback_data=TrendTypeCallback(search_type="apify").pack())],
         ])
         await message.answer(
             "🔥 *Поиск трендов*\n\n"
