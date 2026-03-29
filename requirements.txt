@@ -5,3 +5,4 @@ aiofiles>=23.2.1
 supabase>=2.0.0
 cryptography>=41.0.0
 httpx>=0.25.0
+pytrends>=4.9.2
