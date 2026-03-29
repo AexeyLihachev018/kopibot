@@ -29,6 +29,7 @@ class ClientStates(StatesGroup):
     waiting_plan_niche = State()
     waiting_trend_niche = State()
     waiting_trend_topic = State()
+    waiting_audience_query = State()
 
 
 class OrderCallback(CallbackData, prefix="order"):
@@ -40,7 +41,7 @@ class ImageCallback(CallbackData, prefix="img"):
 
 
 class TrendTypeCallback(CallbackData, prefix="ttype"):
-    search_type: str  # "niche" or "topic"
+    search_type: str  # "niche", "topic", "audience"
 
 
 class WriteFromTrendCallback(CallbackData, prefix="wtren"):
@@ -296,6 +297,7 @@ def create_client_router(bot_record: dict) -> Router:
         trend_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎯 Поиск по нише", callback_data=TrendTypeCallback(search_type="niche").pack())],
             [InlineKeyboardButton(text="🔍 Поиск по теме", callback_data=TrendTypeCallback(search_type="topic").pack())],
+            [InlineKeyboardButton(text="👥 Анализ аудитории", callback_data=TrendTypeCallback(search_type="audience").pack())],
         ])
         await message.answer(
             "🔥 *Поиск трендов*\n\n"
@@ -313,12 +315,20 @@ def create_client_router(bot_record: dict) -> Router:
                 "Например: «Фитнес», «Онлайн-образование», «Ремонт квартир»:"
             )
             await state.set_state(ClientStates.waiting_trend_niche)
-        else:
+        elif callback_data.search_type == "topic":
             await callback.message.answer(
                 "🔍 Введи конкретную тему для поиска трендов.\n\n"
                 "Например: «ChatGPT», «маркетплейсы», «пассивный доход»:"
             )
             await state.set_state(ClientStates.waiting_trend_topic)
+        else:
+            await callback.message.answer(
+                "👥 *Анализ аудитории*\n\n"
+                "Введи хэштег или нишу для анализа аудитории в Instagram.\n\n"
+                "Например: «фитнес», «ремонт», «косметика» (без #):",
+                parse_mode="Markdown",
+            )
+            await state.set_state(ClientStates.waiting_audience_query)
 
     @router.message(ClientStates.waiting_trend_niche)
     async def client_trend_niche_input(message: Message, state: FSMContext):
@@ -397,6 +407,22 @@ def create_client_router(bot_record: dict) -> Router:
         except Exception as e:
             db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
             await callback.message.answer(f"❌ Ошибка генерации: {e}", reply_markup=CLIENT_KB)
+
+    # ─── Анализ аудитории через Apify ────────────────────────────────────────
+    @router.message(ClientStates.waiting_audience_query)
+    async def client_audience_input(message: Message, state: FSMContext):
+        query = message.text.strip() if message.text else ""
+        if not query or query.startswith("/"):
+            await state.clear()
+            await message.answer("Введи хэштег или нишу текстом.", reply_markup=CLIENT_KB)
+            return
+        await state.clear()
+        status_msg = await message.answer(f"👥 Анализирую аудиторию по «{query}»... ~30 сек")
+        try:
+            topics = await _analyze_audience(query)
+            await _send_trend_results(message, status_msg, topics, state)
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Ошибка анализа аудитории: {e}")
 
     # ─── Генерация картинки по посту ─────────────────────────────────────────
     @router.callback_query(ImageCallback.filter())
@@ -613,6 +639,95 @@ async def _search_trends(query: str, search_type: str) -> list:
         messages=[
             {"role": "system", "content": "Ты эксперт по трендам в социальных сетях. Отвечай только на русском языке."},
             {"role": "user", "content": prompt},
+        ],
+        max_tokens=300,
+    )
+    raw = response.choices[0].message.content.strip()
+    topics = [line.strip("•-– ").strip() for line in raw.splitlines() if line.strip()]
+    return topics[:3]
+
+
+async def _analyze_audience(query: str) -> list:
+    """Анализ аудитории Instagram через Apify + генерация тем через OpenRouter."""
+    import os
+    import httpx
+    from openai import AsyncOpenAI
+
+    apify_token = os.getenv("APIFY_API_TOKEN", "")
+    if not apify_token:
+        raise RuntimeError("APIFY_API_TOKEN не настроен")
+
+    # Запускаем Apify актор для Instagram hashtag скрапинга
+    actor_id = "apify~instagram-hashtag-scraper"
+    hashtag = query.strip("#").replace(" ", "").lower()
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # Запускаем актор
+        run_resp = await client.post(
+            f"https://api.apify.com/v2/acts/{actor_id}/runs?token={apify_token}",
+            json={
+                "hashtags": [hashtag],
+                "resultsLimit": 20,
+            },
+        )
+        run_resp.raise_for_status()
+        run_id = run_resp.json()["data"]["id"]
+
+        # Ждём завершения (до 60 сек)
+        import asyncio
+        for _ in range(12):
+            await asyncio.sleep(5)
+            status_resp = await client.get(
+                f"https://api.apify.com/v2/actor-runs/{run_id}?token={apify_token}"
+            )
+            status = status_resp.json()["data"]["status"]
+            if status == "SUCCEEDED":
+                break
+            if status in ("FAILED", "ABORTED", "TIMED-OUT"):
+                raise RuntimeError(f"Apify завершился со статусом: {status}")
+
+        # Получаем результаты
+        dataset_id = status_resp.json()["data"]["defaultDatasetId"]
+        items_resp = await client.get(
+            f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={apify_token}&limit=20"
+        )
+        items = items_resp.json()
+
+    # Собираем популярные хэштеги и темы из постов
+    hashtags_found = []
+    captions = []
+    for item in items:
+        if item.get("caption"):
+            captions.append(item["caption"][:200])
+        for tag in item.get("hashtags", [])[:5]:
+            hashtags_found.append(tag)
+
+    top_tags = ", ".join(list(dict.fromkeys(hashtags_found))[:15])
+    sample_captions = "\n".join(captions[:5])
+
+    # Передаём в OpenRouter для анализа и генерации тем
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+    ai_client = AsyncOpenAI(
+        api_key=openrouter_key,
+        base_url="https://openrouter.ai/api/v1",
+    )
+    response = await ai_client.chat.completions.create(
+        model="anthropic/claude-haiku-4-5",
+        messages=[
+            {
+                "role": "system",
+                "content": "Ты эксперт по контент-маркетингу. Анализируй данные аудитории и предлагай темы постов. Отвечай только на русском языке.",
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Проанализируй аудиторию по теме «{query}» в Instagram.\n\n"
+                    f"Популярные хэштеги: {top_tags}\n\n"
+                    f"Примеры постов:\n{sample_captions}\n\n"
+                    "На основе этих данных предложи 3 конкретные темы для постов, которые будут интересны этой аудитории.\n"
+                    "Верни ровно 3 темы, каждую с новой строки, без нумерации и пояснений. Только темы."
+                ),
+            },
         ],
         max_tokens=300,
     )
