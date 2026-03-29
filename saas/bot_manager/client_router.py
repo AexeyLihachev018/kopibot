@@ -178,7 +178,7 @@ def create_client_router(bot_record: dict) -> Router:
             ]])
             await message.answer(text, reply_markup=img_kb)
             # Явно восстанавливаем reply-клавиатуру после inline-кнопок
-            await message.answer("Выбери действие:", reply_markup=CLIENT_KB)
+            await message.answer("✅ Готово! Выбери следующее действие:", reply_markup=CLIENT_KB)
         except Exception as e:
             db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
             await message.answer(f"❌ Ошибка при генерации: {e}", reply_markup=CLIENT_KB)
@@ -276,9 +276,10 @@ def create_client_router(bot_record: dict) -> Router:
         lines = []
         for i, o in enumerate(orders.data, 1):
             date = o["created_at"][:10]
-            lines.append(f"{i}. [{date}] {o['topic'][:50]}")
+            topic = o['topic'][:50].replace("*", "").replace("_", "").replace("`", "")
+            lines.append(f"{i}. [{date}] {topic}")
 
-        await message.answer("📋 Последние 10 текстов:\n\n" + "\n".join(lines))
+        await message.answer("📋 *Последние 10 текстов:*\n\n" + "\n".join(lines), parse_mode="Markdown")
 
     # ─── Заказать услугу из каталога ─────────────────────────────────────────
     @router.callback_query(OrderCallback.filter())
@@ -315,14 +316,18 @@ def create_client_router(bot_record: dict) -> Router:
         await callback.answer()
         if callback_data.search_type == "niche":
             await callback.message.answer(
-                "🎯 Введи нишу для поиска трендов.\n\n"
-                "Например: «Фитнес», «Онлайн-образование», «Ремонт квартир»:"
+                "🎯 *Поиск по нише*\n\n"
+                "Введи нишу для поиска трендов.\n\n"
+                "Например: «Фитнес», «Онлайн-образование», «Ремонт квартир»:",
+                parse_mode="Markdown",
             )
             await state.set_state(ClientStates.waiting_trend_niche)
         elif callback_data.search_type == "topic":
             await callback.message.answer(
-                "🔍 Введи конкретную тему для поиска трендов.\n\n"
-                "Например: «ChatGPT», «маркетплейсы», «пассивный доход»:"
+                "🔍 *Поиск по теме*\n\n"
+                "Введи конкретную тему для поиска трендов.\n\n"
+                "Например: «ChatGPT», «маркетплейсы», «пассивный доход»:",
+                parse_mode="Markdown",
             )
             await state.set_state(ClientStates.waiting_trend_topic)
         elif callback_data.search_type == "multi":
@@ -462,7 +467,7 @@ def create_client_router(bot_record: dict) -> Router:
                 InlineKeyboardButton(text="🖼 Картинка", callback_data=ImageCallback(order_id=str(order_id)).pack())
             ]])
             await callback.message.answer(text, reply_markup=img_kb)
-            await callback.message.answer("Выбери действие:", reply_markup=CLIENT_KB)
+            await callback.message.answer("✅ Готово! Выбери следующее действие:", reply_markup=CLIENT_KB)
         except Exception as e:
             db.table("orders").update({"status": "failed"}).eq("id", order_id).execute()
             await callback.message.answer(f"❌ Ошибка генерации: {e}", reply_markup=CLIENT_KB)
@@ -670,6 +675,7 @@ async def _send_trend_results(message: Message, status_msg, topics: list, state:
     ] for i in range(len(topics))]
     trend_result_kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=trend_result_kb)
+    await message.answer("✅ Выбери тему и нажми кнопку чтобы написать пост:", reply_markup=CLIENT_KB)
 
 
 async def _search_trends(query: str, search_type: str) -> list:
