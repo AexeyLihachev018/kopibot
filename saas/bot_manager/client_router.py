@@ -559,7 +559,9 @@ async def _generate_with_openrouter(topic: str, api_key: str) -> bytes:
 
     prompt = (
         f"Professional social media post illustration for the topic: {topic[:200]}. "
-        "Vibrant colors, cinematic composition, no text, no watermarks."
+        "Vibrant colors, cinematic composition. "
+        "IMPORTANT: absolutely no text, no letters, no words, no labels, no captions, no watermarks anywhere in the image. "
+        "Pure visual illustration only."
     )
     async with httpx.AsyncClient(timeout=90.0) as client:
         resp = await client.post(
